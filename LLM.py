@@ -9,13 +9,13 @@ import hashlib
 from dotenv import load_dotenv
 import os
 
-# Load variables from .env
+
 load_dotenv(".env")
 
 
 st.set_page_config(page_title="TalkTonic", layout="centered")
 
-# ---------- Helpers ----------
+
 def extract_text_from_file(uploaded_file):
     if uploaded_file.type == "application/pdf":
         with pdfplumber.open(uploaded_file) as pdf:
@@ -64,7 +64,7 @@ def call_groq_model(message, model="llama3-8b-8192"):
 def get_file_hash(file):
     content = file.read()
     hash_val = hashlib.md5(content).hexdigest()
-    file.seek(0)  # Reset pointer after reading
+    file.seek(0)  
     return hash_val
 
 
@@ -82,7 +82,7 @@ def get_theme_colors(theme):
     }
     return themes.get(theme, themes["Dark"])
 
-# ---------- Session Init ----------
+
 if "last_file_hash" not in st.session_state:
     st.session_state.last_file_hash = None
 if "extracted_text" not in st.session_state:
@@ -94,12 +94,12 @@ if "pending_input" not in st.session_state:
 if "theme" not in st.session_state:
     st.session_state.theme = "Dark"
 
-# ---------- File Upload ----------
+
 uploaded_file = st.file_uploader("Upload a PDF, Image, or Text File", type=["pdf", "png", "jpg", "jpeg", "txt"])
 
 if uploaded_file:
     file_hash = get_file_hash(uploaded_file)
-    uploaded_file.seek(0)  # Reset file pointer
+    uploaded_file.seek(0)  
     if file_hash != st.session_state.last_file_hash:
         st.session_state.extracted_text = extract_text_from_file(uploaded_file)
         st.session_state.last_file_hash = file_hash
@@ -109,7 +109,7 @@ else:
     st.session_state.last_file_hash = None
     st.session_state.extracted_text = ""
 
-# ---------- Sidebar ----------
+
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Select the Option", ["Chat", "About"])
 
@@ -119,7 +119,7 @@ st.session_state.theme = st.sidebar.selectbox(
     index=["Dark", "Light", "Midnight"].index(st.session_state.theme)
 )
 
-# ---------- Main Page ----------
+
 if page == "Chat":
     colors = get_theme_colors(st.session_state.theme)
     st.markdown(f"""
@@ -136,7 +136,7 @@ if page == "Chat":
     </style>
     """, unsafe_allow_html=True)
 
-    # Top header
+   
     with st.container():
         col1, col2, col3 = st.columns([1, 5, 4])
         with col1:
@@ -153,7 +153,7 @@ if page == "Chat":
                 </div>
             """, unsafe_allow_html=True)
 
-    # Clear + Download
+   
     col1, col2 = st.columns([1, 1])
     with col1:
         if st.button("🗑️ Clear Chat", use_container_width=True):
@@ -167,7 +167,7 @@ if page == "Chat":
             )
             st.download_button("💾 Download Chat", clean_chat, file_name="talktonic_chat.txt", use_container_width=True)
 
-    # File Text to Bot
+   
     if st.session_state.extracted_text:
         modified_text = st.text_area("Extracted Text", st.session_state.extracted_text, height=200)
         if st.button("Send to Bot"):
@@ -176,7 +176,7 @@ if page == "Chat":
             bot_reply = call_groq_model(modified_text)
             st.session_state.messages.append(("bot", f"{bot_reply}<small>{timestamp}</small>"))
 
-    # Manual chat input
+  
     user_input = st.chat_input("Type your message...")
     if user_input:
         st.session_state.pending_input = user_input.strip()
@@ -188,7 +188,7 @@ if page == "Chat":
         st.session_state.messages.append(("bot", f"{bot_reply}<small>{timestamp}</small>"))
         st.session_state.pending_input = ""
 
-    # Chat messages
+    
     chat_html = """<div id="chatbox" class="chat-container">"""
     for sender, msg in st.session_state.messages:
         chat_html += f'<div class="{sender}-message">{msg}</div>'
