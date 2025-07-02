@@ -28,4 +28,4 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 8501
 
 # Run the Streamlit app
-CMD ["streamlit", "run", "talktonic.py", "--server.port=8501", "--server.enableCORS=false"]
+CMD ["streamlit", "run", "LLM.py", "--server.port=8501", "--server.enableCORS=false"]
