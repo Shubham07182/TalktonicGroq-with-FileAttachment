@@ -7,3 +7,4 @@ scikit-learn
 sentence-transformers
 requests
 python-dotenv
+faiss-cpu
