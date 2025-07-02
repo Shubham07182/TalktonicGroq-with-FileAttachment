@@ -1,7 +1,7 @@
 # Use a base image with Python
 FROM python:3.10-slim
 
-# Install system dependencies (Tesseract + poppler for pdfplumber + others)
+# Install system dependencies for Tesseract, PDF, FAISS, PIL, etc.
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     poppler-utils \
@@ -9,19 +9,23 @@ RUN apt-get update && apt-get install -y \
     libsm6 \
     libxext6 \
     libxrender-dev \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Set the working directory
 WORKDIR /app
 
-# Copy all files
+# Copy your app files into the container
 COPY . .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Set environment variable for Streamlit
+# Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Run the app
-CMD ["streamlit", "run", "LLM.py", "--server.port=8501", "--server.enableCORS=false"]
+# Expose Streamlit port
+EXPOSE 8501
+
+# Run the Streamlit app
+CMD ["streamlit", "run", "talktonic.py", "--server.port=8501", "--server.enableCORS=false"]
