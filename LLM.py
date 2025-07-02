@@ -6,13 +6,29 @@ import requests
 import pdfplumber
 from PIL import Image
 import hashlib
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+import os
+import pickle
 from dotenv import load_dotenv
 import os
 
 
 load_dotenv(".env")
 
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
+embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+
+def retrieve_relevant_chunks(query, vector_store, top_k=3):
+    query_vec = embed_model.encode([query])[0]
+    similarities = []
+    for item in vector_store:
+        score = cosine_similarity([query_vec], [item["vector"]])[0][0]
+        similarities.append((score, item["chunk"]))
+    top_chunks = sorted(similarities, reverse=True)[:top_k]
+    return "\n".join(chunk for _, chunk in top_chunks)
 st.set_page_config(page_title="TalkTonic", layout="centered")
 
 
@@ -93,6 +109,18 @@ if "pending_input" not in st.session_state:
     st.session_state.pending_input = ""
 if "theme" not in st.session_state:
     st.session_state.theme = "Dark"
+for key, default in {
+    "last_file_hash": None,
+    "extracted_text": "",
+    "messages": [],
+    "pending_input": "",
+    "theme": "Dark",
+    "chunks": [],
+    "embeddings": [],
+    "vector_store": []
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 
 uploaded_file = st.file_uploader("Upload a PDF, Image, or Text File", type=["pdf", "png", "jpg", "jpeg", "txt"])
@@ -105,6 +133,25 @@ if uploaded_file:
         st.session_state.last_file_hash = file_hash
         st.success("✅ Text extracted from the new file.")
         st.write(f"📄 Current File: `{uploaded_file.name}`")
+        def chunk_text(text, chunk_size=500, overlap=100):
+            words = text.split()
+            chunks = []
+            for i in range(0, len(words), chunk_size - overlap):
+                chunk = " ".join(words[i:i + chunk_size])
+                chunks.append(chunk)
+            return chunks
+
+        st.session_state.chunks = chunk_text(st.session_state.extracted_text)
+        embeddings = embed_model.encode(st.session_state.chunks)
+        st.session_state.embeddings = embeddings
+
+        st.session_state.vector_store = [
+            {"chunk": chunk, "vector": vector}
+            for chunk, vector in zip(st.session_state.chunks, embeddings)
+        ]
+
+        with open("vector_store.pkl", "wb") as f:
+            pickle.dump(st.session_state.vector_store, f)
 else:
     st.session_state.last_file_hash = None
     st.session_state.extracted_text = ""
@@ -118,7 +165,17 @@ st.session_state.theme = st.sidebar.selectbox(
     "Choose Theme", ["Dark", "Light", "Midnight"],
     index=["Dark", "Light", "Midnight"].index(st.session_state.theme)
 )
-
+if os.path.exists("vector_store.pkl"):
+    try:
+        with open("vector_store.pkl", "rb") as f:
+            st.session_state.vector_store = pickle.load(f)
+    except (EOFError, pickle.UnpicklingError):
+        st.warning("⚠️ vector_store.pkl is corrupted. Starting fresh.")
+        st.session_state.vector_store = []
+        os.remove("vector_store.pkl")
+        st.info("🗑️ Corrupted pickle file deleted.")
+else:
+    st.session_state.vector_store = []
 
 if page == "Chat":
     colors = get_theme_colors(st.session_state.theme)
@@ -183,8 +240,17 @@ if page == "Chat":
 
     if st.session_state.pending_input:
         timestamp = datetime.now().strftime("%H:%M")
-        st.session_state.messages.append(("user", f"{st.session_state.pending_input}<small>{timestamp}</small>"))
-        bot_reply = call_groq_model(st.session_state.pending_input)
+        user_input = st.session_state.pending_input
+
+        if st.session_state.vector_store:
+            retrieved_context = retrieve_relevant_chunks(user_input, st.session_state.vector_store)
+            prompt = f"Context:\n{retrieved_context}\n\nUser Query: {user_input}\n\nAnswer:"
+        else:
+            prompt = user_input
+
+        bot_reply = call_groq_model(prompt)
+
+        st.session_state.messages.append(("user", f"{user_input}<small>{timestamp}</small>"))
         st.session_state.messages.append(("bot", f"{bot_reply}<small>{timestamp}</small>"))
         st.session_state.pending_input = ""
 
