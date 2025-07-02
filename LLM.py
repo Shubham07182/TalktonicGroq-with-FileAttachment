@@ -6,31 +6,24 @@ import requests
 import pdfplumber
 from PIL import Image
 import hashlib
+import pickle
+import numpy as np
+import os
+
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
-import os
-import pickle
 from dotenv import load_dotenv
-import os
 
-
-load_dotenv(".env")
-
+# ========== SETUP ==========
+load_dotenv(".env")  # Loads GROQ_API_KEY from .env if available
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+st.set_page_config(page_title="TalkTonic", layout="centered")
 
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
-def retrieve_relevant_chunks(query, vector_store, top_k=3):
-    query_vec = embed_model.encode([query])[0]
-    similarities = []
-    for item in vector_store:
-        score = cosine_similarity([query_vec], [item["vector"]])[0][0]
-        similarities.append((score, item["chunk"]))
-    top_chunks = sorted(similarities, reverse=True)[:top_k]
-    return "\n".join(chunk for _, chunk in top_chunks)
-st.set_page_config(page_title="TalkTonic", layout="centered")
-
+# ========== UTILITY FUNCTIONS ==========
 
 def extract_text_from_file(uploaded_file):
     if uploaded_file.type == "application/pdf":
@@ -52,9 +45,52 @@ def extract_text_from_file(uploaded_file):
         return uploaded_file.read().decode("utf-8")
     return "Unsupported file type."
 
+
+def get_file_hash(file):
+    content = file.read()
+    hash_val = hashlib.md5(content).hexdigest()
+    file.seek(0)
+    return hash_val
+
+
+def strip_html_tags(text):
+    return re.sub(r'<[^>]*>', '', text)
+
+
+def get_theme_colors(theme):
+    themes = {
+        "Light": {"chat_bg": "#f0f0f0", "user_bg": "#4caf50", "user_color": "white",
+                  "bot_bg": "#d3d3d3", "bot_color": "black", "clear_btn_bg": "#f44336", "clear_btn_color": "white"},
+        "Midnight": {"chat_bg": "#0b0c10", "user_bg": "#66fcf1", "user_color": "#0b0c10",
+                     "bot_bg": "#1f2833", "bot_color": "#c5c6c7", "clear_btn_bg": "#45a29e", "clear_btn_color": "#0b0c10"},
+        "Dark": {"chat_bg": "#1f1f1f", "user_bg": "#4caf50", "user_color": "white",
+                 "bot_bg": "#333", "bot_color": "#f1f1f1", "clear_btn_bg": "#f44336", "clear_btn_color": "white"}
+    }
+    return themes.get(theme, themes["Dark"])
+
+
+def chunk_text(text, chunk_size=500, overlap=100):
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), chunk_size - overlap):
+        chunk = " ".join(words[i:i + chunk_size])
+        chunks.append(chunk)
+    return chunks
+
+
+def retrieve_relevant_chunks(query, vector_store, top_k=3):
+    query_vec = embed_model.encode([query])[0]
+    similarities = []
+    for item in vector_store:
+        score = cosine_similarity([query_vec], [item["vector"]])[0][0]
+        similarities.append((score, item["chunk"]))
+    top_chunks = sorted(similarities, reverse=True)[:top_k]
+    return "\n".join(chunk for _, chunk in top_chunks)
+
+
 def call_groq_model(message, model="llama3-8b-8192"):
     url = "https://api.groq.com/openai/v1/chat/completions"
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY", "gsk_your_fallback_key_here")  # Fallback if .env not set
 
     headers = {
         "Content-Type": "application/json",
@@ -62,7 +98,7 @@ def call_groq_model(message, model="llama3-8b-8192"):
     }
 
     data = {
-        "model": "llama3-8b-8192",
+        "model": model,
         "messages": [{"role": "user", "content": message}],
         "temperature": 0.7
     }
@@ -77,38 +113,7 @@ def call_groq_model(message, model="llama3-8b-8192"):
         return f"General error: {e}"
 
 
-def get_file_hash(file):
-    content = file.read()
-    hash_val = hashlib.md5(content).hexdigest()
-    file.seek(0)  
-    return hash_val
-
-
-def strip_html_tags(text):
-    return re.sub(r'<[^>]*>', '', text)
-
-def get_theme_colors(theme):
-    themes = {
-        "Light": {"chat_bg": "#f0f0f0", "user_bg": "#4caf50", "user_color": "white",
-                  "bot_bg": "#d3d3d3", "bot_color": "black", "clear_btn_bg": "#f44336", "clear_btn_color": "white"},
-        "Midnight": {"chat_bg": "#0b0c10", "user_bg": "#66fcf1", "user_color": "#0b0c10",
-                     "bot_bg": "#1f2833", "bot_color": "#c5c6c7", "clear_btn_bg": "#45a29e", "clear_btn_color": "#0b0c10"},
-        "Dark": {"chat_bg": "#1f1f1f", "user_bg": "#4caf50", "user_color": "white",
-                 "bot_bg": "#333", "bot_color": "#f1f1f1", "clear_btn_bg": "#f44336", "clear_btn_color": "white"}
-    }
-    return themes.get(theme, themes["Dark"])
-
-
-if "last_file_hash" not in st.session_state:
-    st.session_state.last_file_hash = None
-if "extracted_text" not in st.session_state:
-    st.session_state.extracted_text = ""
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "pending_input" not in st.session_state:
-    st.session_state.pending_input = ""
-if "theme" not in st.session_state:
-    st.session_state.theme = "Dark"
+# ========== SESSION STATE ==========
 for key, default in {
     "last_file_hash": None,
     "extracted_text": "",
@@ -123,28 +128,21 @@ for key, default in {
         st.session_state[key] = default
 
 
+# ========== FILE UPLOAD ==========
 uploaded_file = st.file_uploader("Upload a PDF, Image, or Text File", type=["pdf", "png", "jpg", "jpeg", "txt"])
 
 if uploaded_file:
     file_hash = get_file_hash(uploaded_file)
-    uploaded_file.seek(0)  
+    uploaded_file.seek(0)
     if file_hash != st.session_state.last_file_hash:
         st.session_state.extracted_text = extract_text_from_file(uploaded_file)
         st.session_state.last_file_hash = file_hash
         st.success("✅ Text extracted from the new file.")
         st.write(f"📄 Current File: `{uploaded_file.name}`")
-        def chunk_text(text, chunk_size=500, overlap=100):
-            words = text.split()
-            chunks = []
-            for i in range(0, len(words), chunk_size - overlap):
-                chunk = " ".join(words[i:i + chunk_size])
-                chunks.append(chunk)
-            return chunks
 
         st.session_state.chunks = chunk_text(st.session_state.extracted_text)
         embeddings = embed_model.encode(st.session_state.chunks)
         st.session_state.embeddings = embeddings
-
         st.session_state.vector_store = [
             {"chunk": chunk, "vector": vector}
             for chunk, vector in zip(st.session_state.chunks, embeddings)
@@ -152,11 +150,13 @@ if uploaded_file:
 
         with open("vector_store.pkl", "wb") as f:
             pickle.dump(st.session_state.vector_store, f)
+
 else:
     st.session_state.last_file_hash = None
     st.session_state.extracted_text = ""
 
 
+# ========== SIDEBAR ==========
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Select the Option", ["Chat", "About"])
 
@@ -165,6 +165,7 @@ st.session_state.theme = st.sidebar.selectbox(
     "Choose Theme", ["Dark", "Light", "Midnight"],
     index=["Dark", "Light", "Midnight"].index(st.session_state.theme)
 )
+
 if os.path.exists("vector_store.pkl"):
     try:
         with open("vector_store.pkl", "rb") as f:
@@ -177,8 +178,10 @@ if os.path.exists("vector_store.pkl"):
 else:
     st.session_state.vector_store = []
 
+# ========== CHAT PAGE ==========
 if page == "Chat":
     colors = get_theme_colors(st.session_state.theme)
+
     st.markdown(f"""
     <style>
     .chat-container {{height: 400px; overflow-y: auto; border: 1px solid #444; padding: 10px;
@@ -193,7 +196,7 @@ if page == "Chat":
     </style>
     """, unsafe_allow_html=True)
 
-   
+    # Header
     with st.container():
         col1, col2, col3 = st.columns([1, 5, 4])
         with col1:
@@ -210,7 +213,7 @@ if page == "Chat":
                 </div>
             """, unsafe_allow_html=True)
 
-   
+    # Buttons
     col1, col2 = st.columns([1, 1])
     with col1:
         if st.button("🗑️ Clear Chat", use_container_width=True):
@@ -224,7 +227,7 @@ if page == "Chat":
             )
             st.download_button("💾 Download Chat", clean_chat, file_name="talktonic_chat.txt", use_container_width=True)
 
-   
+    # Extracted Text Box
     if st.session_state.extracted_text:
         modified_text = st.text_area("Extracted Text", st.session_state.extracted_text, height=200)
         if st.button("Send to Bot"):
@@ -233,7 +236,7 @@ if page == "Chat":
             bot_reply = call_groq_model(modified_text)
             st.session_state.messages.append(("bot", f"{bot_reply}<small>{timestamp}</small>"))
 
-  
+    # Chat Input
     user_input = st.chat_input("Type your message...")
     if user_input:
         st.session_state.pending_input = user_input.strip()
@@ -254,7 +257,7 @@ if page == "Chat":
         st.session_state.messages.append(("bot", f"{bot_reply}<small>{timestamp}</small>"))
         st.session_state.pending_input = ""
 
-    
+    # Display chat history
     chat_html = """<div id="chatbox" class="chat-container">"""
     for sender, msg in st.session_state.messages:
         chat_html += f'<div class="{sender}-message">{msg}</div>'
@@ -267,6 +270,7 @@ if page == "Chat":
     </script>
     """, unsafe_allow_html=True)
 
+# ========== ABOUT PAGE ==========
 elif page == "About":
     st.subheader("About TalkTonic")
     st.markdown("""
