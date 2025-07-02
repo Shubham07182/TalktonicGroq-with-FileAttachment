@@ -1,6 +1,8 @@
 streamlit
 pytesseract
 pdfplumber
-Pillow
+pillow
+numpy
+scikit-learn
+sentence-transformers
 requests
-python-dotenv
